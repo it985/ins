@@ -29,8 +29,8 @@ jobs:
       - name: Commit and push if changed   # 更新README.md
         run: |
           git diff
-          git config --global user.email "zhaoolee@gmail.com"
-          git config --global user.name "zhaoolee"
+          git config --global user.email "2071916845@qq.com"
+          git config --global user.name "it985"
           git add README.md
-          git commit -m "Github Action auto Updated"
+          git commit -m " auto Updated"
           git push
