@@ -1,10 +1,39 @@
 import pandas as pd
 import os
 import re
-from datetime import datetime
+import datetime
 import time
 import pytz
 import requests
+import ssl
+import urllib.parse
+import OpenSSL
+from dateutil import parser
+
+def get_host_info(url):
+    parsed_url = urllib.parse.urlparse(url)
+    host = parsed_url.netloc
+    return host
+
+def get_certificate_expiration_date(host):
+    result = ''
+    hostname = host
+    port = 443
+    cert = ssl.get_server_certificate((hostname, port)).encode()
+    if(cert):
+        cert_obj = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+        cert_expire_time = parser.parse(cert_obj.get_notAfter().decode("UTF-8")).strftime('%Y-%m-%d %H:%M:%S')
+        if(cert_obj.has_expired()):
+            result = ''
+        else:
+            current_date = datetime.datetime.now()
+            remaining_days = (datetime.datetime.strptime(cert_expire_time, "%Y-%m-%d %H:%M:%S") - current_date).days
+            yymmdd_expiration_date = str(cert_expire_time)[0:10]
+            result = str(yymmdd_expiration_date)+"(剩"+str(remaining_days)+ "天到期)"
+    else:
+        result = ''
+    return result
+
 
 
 def get_all_tag(website_info_data):
@@ -44,10 +73,14 @@ def get_all_tag(website_info_data):
 
 def short_url(url):
     result = ""
-    url = url.lstrip("http://")
-    url = url.lstrip("https://")
-    url = url.lstrip("www.")
-    url = url.rstrip("/")
+    if(url.startswith("http://")):
+        url = url[7:]
+    if(url.startswith("https://")):
+        url = url[8:]
+    if(url.startswith("www.")):
+        url = url[4:]
+    if(url.endswith("/")):
+        url = url[:-1]
 
     if len(url) > 30:
         result = url[0:30] + "..."
@@ -99,11 +132,11 @@ def create_tag_table_html(tag_name, tag_info_data):
         )
 
     website_info_html = website_info_html + "</table>" + "\n" + "<a href='#目录'>🔙目录</a>" + "\n"
-
     return website_info_html
 
 
 def main():
+    print("当前服务器时间", datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     # 读取csv文件
     website_info_data = pd.read_csv("./website_info.csv")
     # 反转数据,保证最新的数据在最前面
@@ -114,10 +147,21 @@ def main():
         print("=start=>>", website_info_index, website_info_row["Url"])
         # 检测网站可用性,记录请求时间,完成数据拼接
         try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
             # 检测网站是否正常
             website_info_row_url_result = requests.get(
-                website_info_row["Url"], timeout=5
+                website_info_row["Url"], timeout=5, headers=headers
             )
+            
+            expiration_date=''
+            try:
+                tmp_host = get_host_info(website_info_row["Url"])
+                expiration_date_result = get_certificate_expiration_date(tmp_host)
+                if(len(expiration_date_result) > 0):
+                    expiration_date = expiration_date_result
+            except Exception as e:
+                expiration_date = ''
+            print("!!expiration_date", expiration_date)
             total_ms = str(
                 int(website_info_row_url_result.elapsed.total_seconds() * 1000)
             )
@@ -130,10 +174,11 @@ def main():
                     + "<span>"
                     + (
                         " 🟢 " + total_ms + "ms"
-                        if str(website_info_row_url_result.status_code).startswith("2")
+                        if (str(website_info_row_url_result.status_code).startswith("1") or str(website_info_row_url_result.status_code).startswith("2") or str(website_info_row_url_result.status_code).startswith("3") or str(website_info_row_url_result.status_code).startswith("4"))
                         else " 🔴"
                     )
                     + "</span><br/>"
+
                 )
         # 无法响应，标注红色
         except Exception as e:
@@ -154,6 +199,10 @@ def main():
                 + "'>"
                 + (short_url(website_info_row["Url"]))
                 + "</a>"
+                + (
+                    "<br/><span>SSL证书到期时间:" + expiration_date + "</span>"
+                    if (expiration_date and ("🟢" in website_info_row["Name"])) else "" 
+                )
             )
             print("finish", website_info_row["Url"], website_info_row["Name"])
     # 完成table数据拼接
@@ -193,7 +242,7 @@ def main():
     with open(os.path.join(os.getcwd(), "EditREADME.md"), "r") as load_f:
         readme_md = load_f.read()
     mail_re = r"--insStart----insEnd--"
-    in_datetime = datetime.fromtimestamp(
+    in_datetime = datetime.datetime.fromtimestamp(
         int(time.time()), pytz.timezone("Asia/Shanghai")
     ).strftime("%Y-%m-%d %H:%M:%S")
     all_info_content = (
